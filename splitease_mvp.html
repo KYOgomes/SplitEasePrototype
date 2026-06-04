@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+    <title>SplitEase MVP</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div id="app"></div>
+    <div id="toast-root"></div>
+    <script>
+        const menuItems = [
+            { id: 1, name: 'Cerveja Artesanal', price: 18, emoji: '🍺', cat: 'bebida' },
+            { id: 2, name: 'Caipirinha', price: 22, emoji: '🍹', cat: 'bebida' },
+            { id: 3, name: 'Refrigerante', price: 8, emoji: '🥤', cat: 'bebida' },
+            { id: 4, name: 'Água sem Gás', price: 6, emoji: '💧', cat: 'bebida' },
+            { id: 5, name: 'Porção de Fritas', price: 35, emoji: '🍟', cat: 'prato' },
+            { id: 6, name: 'Pastel (6 un)', price: 42, emoji: '🥟', cat: 'prato' },
+            { id: 7, name: 'Hambúrguer Clássico', price: 38, emoji: '🍔', cat: 'prato' },
+            { id: 8, name: 'Pizza Marguerita', price: 65, emoji: '🍕', cat: 'prato' },
+            { id: 9, name: 'Suco de Laranja', price: 12, emoji: '🍊', cat: 'bebida' },
+            { id: 10, name: 'Escondidinho', price: 45, emoji: '🥘', cat: 'prato' },
+            { id: 11, name: 'Filet com Fritas', price: 78, emoji: '🥩', cat: 'prato' },
+            { id: 12, name: 'Salada Caesar', price: 32, emoji: '🥗', cat: 'prato' },
+            { id: 13, name: 'Pudim', price: 15, emoji: '🍮', cat: 'sobremesa' },
+            { id: 14, name: 'Brownie c/ Sorvete', price: 24, emoji: '🍫', cat: 'sobremesa' },
+            { id: 15, name: 'Café Expresso', price: 7, emoji: '☕', cat: 'sobremesa' },
+            { id: 16, name: 'Drink da Casa', price: 28, emoji: '🍸', cat: 'bebida' }
+        ];
+        const cats = [{ name: '🍺 Bebidas', key: 'bebida' }, { name: '🍔 Pratos', key: 'prato' }, { name: '🍰 Sobremesas', key: 'sobremesa' }];
+        const tables = [
+            { id: 1, number: '01', status: 'active', people: 3, items: [{ itemId: 1, qty: 2 }, { itemId: 5, qty: 1 }] },
+            { id: 2, number: '02', status: 'closed', people: 0, items: [] },
+            { id: 3, number: '03', status: 'active', people: 2, items: [{ itemId: 7, qty: 2 }] },
+            { id: 4, number: '04', status: 'active', people: 5, items: [{ itemId: 2, qty: 3 }, { itemId: 8, qty: 1 }, { itemId: 13, qty: 5 }] },
+            { id: 5, number: '05', status: 'active', people: 1, items: [{ itemId: 15, qty: 1 }] },
+            { id: 6, number: '06', status: 'closed', people: 0, items: [] }
+        ];
+        function tableTotal(t) { return t.items.reduce((s, o) => { const m = menuItems.find(i => i.id === o.itemId); return s + (m ? m.price * o.qty : 0) }, 0) }
+
+        let notifications = [];
+        let state = {
+            screen: 'hub',
+            consumer: { table: null, items: [], people: [], config: { tip: 10, couvert: 15, splitType: 'equal' } },
+            waiter: { selectedTable: null }
+        };
+        const app = document.getElementById('app');
+        const toastRoot = document.getElementById('toast-root');
+
+        function render() {
+            app.innerHTML = ''; ({
+                hub: renderHub, consumer_table: renderCTable, consumer_menu: renderCMenu,
+                consumer_add: renderCAdd, consumer_people: renderCPeople,
+                consumer_config: renderCConfig, consumer_summary: renderCSummary,
+                waiter_tables: renderWTables, waiter_table_detail: renderWDetail,
+                waiter_add_items: renderWAdd, waiter_config: renderWConfig, waiter_checkout: renderWCheckout
+            }[state.screen] || renderHub)();
+        }
+
+        function nav(s) { state.screen = s; render(); }
+        function fmt(v) { return 'R$ ' + v.toFixed(2).replace('.', ','); }
+        function ini(n) { return n.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2); }
+        function stg(i) { return 'animate-in stagger-' + Math.min(i + 1, 8); }
+
+        function showToast(msg, type = 'warning') {
+            toastRoot.innerHTML = `<div class="toast-container"><div class="toast ${type}"><span class="toast-icon">${type === 'success' ? '✅' : type === 'warning' ? '🔔' : 'ℹ️'}</span><span class="toast-text">${msg}</span></div></div>`;
+            setTimeout(() => { const t = toastRoot.querySelector('.toast'); if (t) t.classList.add('leaving') }, 2500);
+            setTimeout(() => toastRoot.innerHTML = '', 3000);
+        }
+
+        function addNotification(msg, tableNum) {
+            notifications.unshift({ msg, table: tableNum, time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) });
+            if (notifications.length > 10) notifications.pop();
+        }
+
+        // ===== HUB =====
+        function renderHub() {
+            app.innerHTML = `<div class="hub-container">
+<div class="logo">Split<span>Ease</span></div>
+<p class="hub-subtitle">Divida contas de forma simples e justa.</p>
+<div class="hub-buttons">
+<div class="hub-card consumer" onclick="nav('consumer_table')"><div class="hub-icon">🧾</div><h3>Sou Consumidor</h3><p>Faça pedidos e divida a conta</p></div>
+<div class="hub-card waiter" onclick="nav('waiter_tables')"><div class="hub-icon">👨‍🍳</div><h3>Sou Garçom</h3><p>Gerencie mesas e pedidos</p></div>
+</div></div>`;
+        }
+
+        // ===== CONSUMER: Mesa =====
+        function renderCTable() {
+            app.innerHTML = `<header><button class="back-btn" onclick="nav('hub')">❮</button>Identificação</header>
+<div class="content"><div class="animate-in"><h3>Qual é a sua mesa?</h3>
+<input type="number" id="tNum" placeholder="Ex: 04" inputmode="numeric">
+<div class="qr-hint"><span class="qr-icon">📷</span>Ou escaneie o QR Code na mesa</div></div></div>
+<div class="bottom-action"><button class="btn-primary" onclick="cSetTable()">Continuar</button></div>`;
+            setTimeout(() => document.getElementById('tNum')?.focus(), 400);
+        }
+        window.cSetTable = function () {
+            const n = document.getElementById('tNum').value;
+            if (!n) return alert('Informe o número da mesa.');
+            state.consumer.table = n.padStart(2, '0');
+            if (!state.consumer.people.length) state.consumer.people = ['Você', 'João', 'Maria'];
+            if (!state.consumer.items.length) {
+                const pp = [...state.consumer.people];
+                state.consumer.items = [{ item: menuItems[0], qty: 2, consumers: [...pp] }, { item: menuItems[4], qty: 1, consumers: [...pp] }, { item: menuItems[1], qty: 3, consumers: [...pp] }];
+            }
+            nav('consumer_menu');
+        };
+
+        // ===== CONSUMER: Menu da Mesa =====
+        function renderCMenu() {
+            const total = state.consumer.items.reduce((s, o) => s + o.item.price * o.qty, 0);
+            const html = state.consumer.items.map((o, i) => `
+<div class="card ${stg(i)}"><div class="card-row">
+<div><h4>${o.item.emoji} ${o.qty}x ${o.item.name}</h4><span class="item-meta">${fmt(o.item.price)} cada</span></div>
+<div style="display:flex;align-items:center;gap:10px">
+<span class="item-price">${fmt(o.item.price * o.qty)}</span>
+<button class="btn-remove" onclick="removeItem(${i})">✕</button>
+</div></div></div>`).join('');
+            app.innerHTML = `<header><button class="back-btn" onclick="nav('consumer_table')">❮</button>Mesa ${state.consumer.table}</header>
+<div class="content">
+<div class="card-row mb-md animate-in"><h3 style="margin:0">Consumo da Mesa</h3><span class="item-price" style="font-size:1.1rem">${fmt(total)}</span></div>
+${html}
+<button class="btn-outline animate-in mt-md" onclick="nav('consumer_add')">+ Adicionar Novo Item</button>
+</div>
+<div class="bottom-action"><button class="btn-primary" onclick="nav('consumer_people')">Dividir a Conta →</button></div>`;
+        }
+        window.removeItem = function (i) { state.consumer.items.splice(i, 1); render(); };
+
+        // ===== CONSUMER: Adicionar Item =====
+        function renderCAdd() {
+            const cartCount = state.consumer.items.length;
+            let html = cats.map(c => {
+                const items = menuItems.filter(m => m.cat === c.key);
+                return `<p class="section-label mt-md">${c.name}</p>` + items.map((m, i) => {
+                    const inCart = state.consumer.items.find(o => o.item.id === m.id);
+                    return `<div class="menu-item ${stg(i)}"><div><h4 style="font-size:0.9rem">${m.emoji} ${m.name}</h4><span class="item-price text-sm">${fmt(m.price)}</span></div>
+${inCart ? `<div class="qty-control">
+<button class="qty-btn" onclick="cQty(${m.id},-1)">−</button>
+<span class="qty-value">${inCart.qty}</span>
+<button class="qty-btn add" onclick="cQty(${m.id},1)">+</button></div>`
+                            : `<button class="btn-secondary btn-icon" onclick="cAddItem(${m.id})">+</button>`}
+</div>`;
+                }).join('');
+            }).join('');
+            app.innerHTML = `<header><button class="back-btn" onclick="nav('consumer_menu')">❮</button>Cardápio</header>
+<div class="content"><input type="text" placeholder="🔍 Buscar item..." class="animate-in" oninput="filterMenu(this.value)">${html}</div>
+<div class="bottom-action"><button class="btn-primary" onclick="nav('consumer_menu')">Ver Pedido (${cartCount} ${cartCount === 1 ? 'item' : 'itens'}) →</button></div>`;
+        }
+        window.cAddItem = function (id) {
+            const m = menuItems.find(x => x.id === id);
+            state.consumer.items.push({ item: m, qty: 1, consumers: [...state.consumer.people] });
+            addNotification(`Novo pedido: 1x ${m.name}`, state.consumer.table);
+            showToast(`${m.emoji} ${m.name} adicionado!`, 'success');
+            render();
+        };
+        window.cQty = function (id, d) {
+            const idx = state.consumer.items.findIndex(o => o.item.id === id);
+            if (idx < 0) return;
+            state.consumer.items[idx].qty += d;
+            if (state.consumer.items[idx].qty <= 0) { state.consumer.items.splice(idx, 1); showToast('Item removido', 'warning'); }
+            else if (d > 0) {
+                const m = menuItems.find(x => x.id === id);
+                addNotification(`Qtd alterada: ${state.consumer.items[idx].qty}x ${m.name}`, state.consumer.table);
+            }
+            render();
+        };
+        window.filterMenu = function (q) {
+            document.querySelectorAll('.menu-item').forEach(el => {
+                el.style.display = el.textContent.toLowerCase().includes(q.toLowerCase()) ? '' : 'none';
+            });
+        };
+
+        // ===== CONSUMER: Pessoas =====
+        function ensureConsumers() {
+            // Guarantee every item has a consumers array
+            state.consumer.items.forEach(o => {
+                if (!o.consumers) o.consumers = [...state.consumer.people];
+            });
+        }
+        function renderCPeople() {
+            ensureConsumers();
+            const peopleHtml = state.consumer.people.map((p, i) => `
+<div class="card card-row ${stg(i)}">
+<div class="person-name"><div class="person-avatar">${ini(p)}</div><span>${p}</span></div>
+<button class="btn-remove" onclick="removePerson(${i})">✕</button></div>`).join('');
+            const itemsHtml = state.consumer.items.map((o, idx) => `
+<div class="card card-stack ${stg(idx)}">
+<div class="card-row"><h4>${o.item.emoji} ${o.qty}x ${o.item.name}</h4><span class="item-price">${fmt(o.item.price * o.qty)}</span></div>
+<div class="chip-group">${state.consumer.people.map(p => {
+                const isIn = o.consumers.includes(p);
+                return `<span class="chip ${isIn ? 'active' : ''}" onclick="toggleConsumer(${idx},'${p.replace(/'/g, "\\'")}')">${p}</span>`;
+            }).join('')}</div>
+<span class="text-sm text-secondary">${o.consumers.length} pessoa${o.consumers.length !== 1 ? 's' : ''} · ${fmt(o.item.price * o.qty / Math.max(o.consumers.length, 1))} cada</span>
+</div>`).join('');
+            app.innerHTML = `<header><button class="back-btn" onclick="nav('consumer_menu')">❮</button>Quem Consumiu?</header>
+<div class="content">
+<p class="section-label animate-in">Pessoas na Mesa (${state.consumer.people.length})</p>
+${peopleHtml}
+<div class="input-row mt-md animate-in"><input type="text" id="newP" placeholder="Adicionar pessoa..." style="margin:0">
+<button class="btn-secondary" onclick="addPerson()">+</button></div>
+<div class="divider"></div>
+<p class="section-label animate-in">Associar itens · toque no nome para incluir/excluir</p>
+${itemsHtml}</div>
+<div class="bottom-action"><button class="btn-primary" onclick="nav('consumer_config')">Configurar Taxas →</button></div>`;
+        }
+        window.toggleConsumer = function (itemIdx, personName) {
+            const o = state.consumer.items[itemIdx];
+            const i = o.consumers.indexOf(personName);
+            if (i >= 0) o.consumers.splice(i, 1); else o.consumers.push(personName);
+            render();
+        };
+        window.addPerson = function () {
+            const input = document.getElementById('newP');
+            const n = input.value.trim();
+            if (n && !state.consumer.people.includes(n)) {
+                state.consumer.people.push(n);
+                // Add new person to all items by default
+                state.consumer.items.forEach(o => { if (!o.consumers.includes(n)) o.consumers.push(n); });
+                render();
+            }
+        };
+        window.removePerson = function (i) {
+            if (state.consumer.people.length <= 1) return alert('Precisa de pelo menos 1 pessoa.');
+            const name = state.consumer.people[i];
+            state.consumer.people.splice(i, 1);
+            // Remove from all item associations
+            state.consumer.items.forEach(o => { const ci = o.consumers.indexOf(name); if (ci >= 0) o.consumers.splice(ci, 1); });
+            render();
+        };
+
+        // ===== CONSUMER: Config =====
+        function saveConfig() {
+            const tipEl = document.querySelector('input[name="tip"]:checked');
+            if (tipEl) state.consumer.config.tip = parseInt(tipEl.value);
+            const cvEl = document.getElementById('cvVal');
+            if (cvEl) state.consumer.config.couvert = parseFloat(cvEl.value) || 0;
+            const spEl = document.querySelector('input[name="split"]:checked');
+            if (spEl) state.consumer.config.splitType = spEl.value;
+        }
+        function renderCConfig() {
+            const cfg = state.consumer.config;
+            app.innerHTML = `<header><button class="back-btn" onclick="saveConfig();nav('consumer_people')">❮</button>Taxas e Divisão</header>
+<div class="content">
+<div class="card card-stack animate-in"><h4>💰 Gorjeta</h4>
+<div class="radio-group" id="tipG">
+<label class="radio-option ${cfg.tip === 10 ? 'selected' : ''}" onclick="selRadio(this,'tipG')"><input type="radio" name="tip" value="10" ${cfg.tip === 10 ? 'checked' : ''}> 10% (sugerido)</label>
+<label class="radio-option ${cfg.tip === 15 ? 'selected' : ''}" onclick="selRadio(this,'tipG')"><input type="radio" name="tip" value="15" ${cfg.tip === 15 ? 'checked' : ''}> 15% (generoso)</label>
+<label class="radio-option ${cfg.tip === 0 ? 'selected' : ''}" onclick="selRadio(this,'tipG')"><input type="radio" name="tip" value="0" ${cfg.tip === 0 ? 'checked' : ''}> Sem gorjeta</label></div></div>
+<div class="card card-stack animate-in stagger-2"><h4>🎵 Couvert Artístico</h4>
+<input type="number" id="cvVal" value="${cfg.couvert}" style="margin:0" onchange="state.consumer.config.couvert=parseFloat(this.value)||0">
+<span class="text-sm text-secondary">Valor por pessoa (R$)</span></div>
+<div class="card card-stack animate-in stagger-3"><h4>📊 Modo de Divisão</h4>
+<div class="radio-group" id="spG">
+<label class="radio-option ${cfg.splitType === 'consumption' ? 'selected' : ''}" onclick="selRadio(this,'spG')"><input type="radio" name="split" value="consumption" ${cfg.splitType === 'consumption' ? 'checked' : ''}> Por consumo individual</label>
+<label class="radio-option ${cfg.splitType === 'equal' ? 'selected' : ''}" onclick="selRadio(this,'spG')"><input type="radio" name="split" value="equal" ${cfg.splitType === 'equal' ? 'checked' : ''}> Divisão igualitária</label></div></div></div>
+<div class="bottom-action"><button class="btn-primary" onclick="saveConfig();nav('consumer_summary')">Ver Resumo Final →</button></div>`;
+        }
+        window.selRadio = function (el, gid) {
+            document.querySelectorAll('#' + gid + ' .radio-option').forEach(o => o.classList.remove('selected'));
+            el.classList.add('selected'); el.querySelector('input').checked = true;
+            // Persist immediately
+            const inp = el.querySelector('input');
+            if (inp.name === 'tip') state.consumer.config.tip = parseInt(inp.value);
+            if (inp.name === 'split') state.consumer.config.splitType = inp.value;
+        };
+
+        // ===== CONSUMER: Resumo =====
+        function calcPerPerson() {
+            ensureConsumers();
+            const cfg = state.consumer.config;
+            const people = state.consumer.people;
+            const personTotals = {};
+            people.forEach(p => personTotals[p] = 0);
+            // Distribute each item cost among its consumers
+            state.consumer.items.forEach(o => {
+                const itemTotal = o.item.price * o.qty;
+                const consumers = o.consumers.filter(c => people.includes(c));
+                if (consumers.length === 0) return;
+                if (cfg.splitType === 'equal') {
+                    // Equal: split evenly among ALL people regardless of who consumed
+                    const share = itemTotal / people.length;
+                    people.forEach(p => personTotals[p] += share);
+                } else {
+                    // By consumption: only those who consumed pay
+                    const share = itemTotal / consumers.length;
+                    consumers.forEach(p => personTotals[p] += share);
+                }
+            });
+            // Add tip and couvert per person
+            const sub = state.consumer.items.reduce((s, o) => s + o.item.price * o.qty, 0);
+            const tipPerPerson = (sub * (cfg.tip / 100)) / people.length;
+            const cvPerPerson = cfg.couvert;
+            people.forEach(p => { personTotals[p] += tipPerPerson + cvPerPerson; });
+            return { personTotals, sub, tip: sub * (cfg.tip / 100), cv: cfg.couvert * people.length };
+        }
+        function renderCSummary() {
+            const cfg = state.consumer.config;
+            const { personTotals, sub, tip, cv } = calcPerPerson();
+            const total = sub + tip + cv;
+            const pp = state.consumer.people.map((p, i) => `
+<div class="person-row ${stg(i)}"><div class="person-name"><div class="person-avatar">${ini(p)}</div><span>${p}</span></div>
+<span class="person-value">${fmt(personTotals[p])}</span></div>`).join('');
+            app.innerHTML = `<header><button class="back-btn" onclick="nav('consumer_config')">❮</button>Resumo da Conta</header>
+<div class="content">
+<div class="total-banner"><div class="total-value">${fmt(total)}</div><div class="total-label">Total da Mesa ${state.consumer.table}</div></div>
+<div class="card card-stack animate-in stagger-1"><p class="section-label">Detalhamento</p>
+<div class="breakdown">
+<div class="breakdown-row"><span class="label">Itens consumidos</span><span class="value">${fmt(sub)}</span></div>
+<div class="breakdown-row"><span class="label">Gorjeta (${cfg.tip}%)</span><span class="value">${fmt(tip)}</span></div>
+<div class="breakdown-row"><span class="label">Couvert (${state.consumer.people.length}x)</span><span class="value">${fmt(cv)}</span></div></div></div>
+<div class="divider"></div><p class="section-label animate-in stagger-2">Valor por Pessoa (${cfg.splitType === 'equal' ? 'igualitário' : 'por consumo'})</p>
+<div class="card card-stack animate-in stagger-3">${pp}</div></div>
+<div class="bottom-action"><button class="btn-primary" onclick="showToast('✅ Pagamento simulado!','success');setTimeout(()=>nav('hub'),1500)">💳 Pagar Minha Parte</button></div>`;
+        }
+
+        // ===== WAITER: Mesas =====
+        function renderWTables() {
+            const unread = notifications.length;
+            const grid = tables.map((t, i) => `
+<div class="table-card ${t.status} ${stg(i)}" onclick="wSelTable(${t.id})">
+<div class="table-number">${t.number}</div>
+<span class="badge ${t.status}">${t.status === 'active' ? 'Aberta' : 'Fechada'}</span>
+${t.status === 'active' ? `<div class="table-total">${fmt(tableTotal(t))}</div><span class="text-sm text-secondary">${t.people} pessoa${t.people > 1 ? 's' : ''}</span>`
+                    : '<div class="table-total text-secondary">—</div>'}</div>`).join('');
+            const notifHtml = unread ? `<div class="notif-panel"><h4>🔔 ${unread} notificação${unread > 1 ? 'ões' : ''} de pedidos</h4>
+${notifications.slice(0, 5).map(n => `<div class="notif-item"><span>📋 Mesa ${n.table}: ${n.msg}</span><span class="notif-time">${n.time}</span></div>`).join('')}
+${unread > 5 ? `<span class="text-sm text-secondary">+${unread - 5} mais...</span>` : ''}
+</div>`: '';
+            app.innerHTML = `<header><button class="back-btn" onclick="nav('hub')">❮</button>Painel do Garçom
+${unread ? `<span class="notif-badge pulse">${unread}</span>` : ''}</header>
+<div class="content">${notifHtml}<h3>Mesas</h3><div class="table-grid">${grid}</div></div>
+<div class="bottom-action"><div class="action-row">
+<button class="btn-outline" onclick="notifications=[];render()">Limpar Notif.</button>
+<button class="btn-primary" onclick="showToast('Nova mesa aberta!','success')">+ Nova Mesa</button></div></div>`;
+        }
+        window.wSelTable = function (id) { state.waiter.selectedTable = tables.find(t => t.id === id); nav('waiter_table_detail'); };
+
+        // ===== WAITER: Detalhe =====
+        function renderWDetail() {
+            const t = state.waiter.selectedTable; const tot = tableTotal(t);
+            const tNotifs = notifications.filter(n => n.table === t.number);
+            const notifHtml = tNotifs.length ? `<div class="notif-panel"><h4>🔔 Pedidos virtuais desta mesa</h4>
+${tNotifs.map(n => `<div class="notif-item"><span>📋 ${n.msg}</span><span class="notif-time">${n.time}</span></div>`).join('')}</div>` : '';
+            const itemsHtml = t.items.map((o, i) => {
+                const m = menuItems.find(x => x.id === o.itemId);
+                return m ? `<div class="card ${stg(i)}"><div class="card-row"><div><h4>${m.emoji} ${o.qty}x ${m.name}</h4></div><span class="item-price">${fmt(m.price * o.qty)}</span></div></div>` : ''
+            }).join('');
+            app.innerHTML = `<header><button class="back-btn" onclick="nav('waiter_tables')">❮</button>Mesa ${t.number}</header>
+<div class="content">
+<div class="total-banner"><div class="total-value">${fmt(tot)}</div><div class="total-label">Total parcial · ${t.people} pessoa${t.people > 1 ? 's' : ''}</div></div>
+${notifHtml}<p class="section-label animate-in">Itens Lançados</p>${itemsHtml}
+${!t.items.length ? '<div class="empty-state"><div class="empty-icon">📋</div><p>Nenhum item ainda</p></div>' : ''}</div>
+<div class="bottom-action"><div class="action-row">
+<button class="btn-outline" onclick="nav('waiter_add_items')">+ Item</button>
+<button class="btn-primary" onclick="nav('waiter_config')">Fechar Conta</button></div></div>`;
+        }
+
+        // ===== WAITER: Add Items =====
+        function renderWAdd() {
+            const t = state.waiter.selectedTable;
+            let html = cats.map(c => {
+                const items = menuItems.filter(m => m.cat === c.key);
+                return `<p class="section-label mt-md">${c.name}</p>` + items.map((m, i) => {
+                    const inOrder = t.items.find(o => o.itemId === m.id);
+                    return `<div class="menu-item ${stg(i)}"><div><h4 style="font-size:0.9rem">${m.emoji} ${m.name}</h4><span class="item-price text-sm">${fmt(m.price)}</span></div>
+${inOrder ? `<div class="qty-control"><button class="qty-btn" onclick="wQty(${m.id},-1)">−</button><span class="qty-value">${inOrder.qty}</span><button class="qty-btn add" onclick="wQty(${m.id},1)">+</button></div>`
+                            : `<button class="btn-secondary btn-icon" onclick="wAddItem(${m.id})">+</button>`}</div>`;
+                }).join('');
+            }).join('');
+            app.innerHTML = `<header><button class="back-btn" onclick="nav('waiter_table_detail')">❮</button>Cardápio · Mesa ${t.number}</header>
+<div class="content"><input type="text" placeholder="🔍 Buscar..." class="animate-in" oninput="filterMenu(this.value)">${html}</div>`;
+        }
+        window.wAddItem = function (id) {
+            const t = state.waiter.selectedTable; t.items.push({ itemId: id, qty: 1 });
+            const m = menuItems.find(x => x.id === id); showToast(`${m.emoji} ${m.name} adicionado!`, 'success'); render();
+        };
+        window.wQty = function (id, d) {
+            const t = state.waiter.selectedTable; const idx = t.items.findIndex(o => o.itemId === id);
+            if (idx < 0) return; t.items[idx].qty += d; if (t.items[idx].qty <= 0) t.items.splice(idx, 1); render();
+        };
+
+        // ===== WAITER: Config =====
+        function renderWConfig() {
+            const t = state.waiter.selectedTable;
+            app.innerHTML = `<header><button class="back-btn" onclick="nav('waiter_table_detail')">❮</button>Configurar Conta</header>
+<div class="content">
+<div class="card card-stack animate-in"><h4>💰 Taxa de Serviço (10%)</h4>
+<div class="radio-group" id="taxG"><label class="radio-option selected" onclick="selRadio(this,'taxG')"><input type="radio" name="tax" checked> Sim</label>
+<label class="radio-option" onclick="selRadio(this,'taxG')"><input type="radio" name="tax"> Não</label></div></div>
+<div class="card card-stack animate-in stagger-2"><h4>🎵 Couvert Artístico</h4><input type="number" value="0" placeholder="R$ por pessoa" style="margin:0">
+<span class="text-sm text-secondary">Valor por pessoa</span></div>
+<div class="card card-stack animate-in stagger-3"><h4>👥 Pessoas na Mesa</h4><input type="number" value="${t.people || 3}" style="margin:0"></div>
+<div class="card card-stack animate-in stagger-4"><h4>📊 Modo de Divisão</h4>
+<div class="radio-group" id="wsG"><label class="radio-option selected" onclick="selRadio(this,'wsG')"><input type="radio" name="ws" checked> Por consumo</label>
+<label class="radio-option" onclick="selRadio(this,'wsG')"><input type="radio" name="ws"> Igualitária</label></div></div></div>
+<div class="bottom-action"><button class="btn-primary" onclick="nav('waiter_checkout')">Apresentar Conta →</button></div>`;
+        }
+
+        // ===== WAITER: Checkout =====
+        function renderWCheckout() {
+            const t = state.waiter.selectedTable; const tot = tableTotal(t) * 1.1; const pp = tot / (t.people || 3);
+            const pays = [{ name: 'João', paid: true }, { name: 'Maria', paid: false }, { name: 'Pedro', paid: false }];
+            const payHtml = pays.map((p, i) => `
+<div class="payment-card ${p.paid ? 'paid' : ''} ${stg(i)}" onclick="togglePaid(this)">
+<div class="person-name"><div class="person-avatar">${ini(p.name)}</div><div><strong>${p.name}</strong><div class="text-sm text-secondary">${fmt(pp)}</div></div></div>
+<span class="payment-status ${p.paid ? 'paid' : 'pending'}">${p.paid ? '✓ Pago' : 'Pendente'}</span></div>`).join('');
+            const paidN = pays.filter(p => p.paid).length;
+            app.innerHTML = `<header><button class="back-btn" onclick="nav('waiter_config')">❮</button>Recebimento</header>
+<div class="content">
+<div class="total-banner"><div class="total-value">${fmt(tot)}</div><div class="total-label">Total com taxas · Mesa ${t.number}</div></div>
+<div class="card-row mb-md animate-in"><p class="section-label" style="margin:0">Pagamentos</p><span class="text-sm text-secondary">${paidN}/${pays.length} pagos</span></div>
+${payHtml}</div>
+<div class="bottom-action"><button class="btn-primary" onclick="showToast('✅ Mesa finalizada!','success');setTimeout(()=>nav('waiter_tables'),1500)">Finalizar Mesa</button></div>`;
+        }
+        window.togglePaid = function (el) {
+            el.classList.toggle('paid'); const s = el.querySelector('.payment-status'); const p = el.classList.contains('paid');
+            s.textContent = p ? '✓ Pago' : 'Pendente'; s.className = 'payment-status ' + (p ? 'paid' : 'pending');
+        };
+
+        render();
+    </script>
+</body>
+
+</html>
